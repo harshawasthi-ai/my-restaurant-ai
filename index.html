@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Restaurant AI Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: sans-serif; }
+  body { background: #f8f8f8; padding: 24px; color: #1a1a1a; }
+  h1 { font-size: 18px; font-weight: 500; margin-bottom: 6px; }
+  .subtitle { font-size: 13px; color: #888; margin-bottom: 24px; }
+  .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
+  .metric { background: white; border-radius: 10px; padding: 16px;
+            border: 1px solid #eee; }
+  .metric-label { font-size: 11px; color: #888; text-transform: uppercase;
+                  letter-spacing: 0.05em; margin-bottom: 8px; }
+  .metric-val { font-size: 28px; font-weight: 500; color: #1a1a2e; }
+  .metric-sub { font-size: 11px; color: #aaa; margin-top: 4px; }
+  .section { background: white; border-radius: 10px; padding: 20px;
+             border: 1px solid #eee; margin-bottom: 16px; }
+  .section h2 { font-size: 14px; font-weight: 500; margin-bottom: 16px;
+                color: #1a1a2e; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 8px; color: #888; font-weight: 400;
+       border-bottom: 1px solid #eee; font-size: 11px; text-transform: uppercase; }
+  td { padding: 12px 8px; border-bottom: 1px solid #f5f5f5; }
+  tr:last-child td { border-bottom: none; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 20px;
+           font-size: 11px; font-weight: 500; }
+  .badge-confirmed { background: #e8f5e9; color: #2e7d32; }
+  .badge-pending { background: #fff8e1; color: #f57f17; }
+  .badge-yes { background: #e8f5e9; color: #2e7d32; }
+  .badge-no { background: #fafafa; color: #aaa; border: 1px solid #eee; }
+  .refresh { font-size: 12px; color: #aaa; margin-bottom: 16px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%;
+         background: #4caf50; display: inline-block; margin-right: 6px; }
+  .events-list { display: flex; flex-direction: column; gap: 8px; }
+  .event-row { display: flex; align-items: center; gap: 12px;
+               padding: 8px 0; border-bottom: 1px solid #f5f5f5;
+               font-size: 12px; }
+  .event-row:last-child { border-bottom: none; }
+  .event-type { font-weight: 500; min-width: 140px; color: #1a1a2e; }
+  .event-session { color: #aaa; min-width: 100px; }
+  .event-time { color: #aaa; margin-left: auto; }
+  .top-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  @media (max-width: 700px) {
+    .metrics { grid-template-columns: repeat(2, 1fr); }
+    .top-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Restaurant AI — Operator Dashboard</h1>
+<p class="subtitle"><span class="dot"></span>Live · updates every 15 seconds</p>
+
+<div class="metrics">
+  <div class="metric">
+    <p class="metric-label">Revenue today</p>
+    <p class="metric-val" id="revenue">—</p>
+    <p class="metric-sub">total confirmed orders</p>
+  </div>
+  <div class="metric">
+    <p class="metric-label">Orders today</p>
+    <p class="metric-val" id="orders">—</p>
+    <p class="metric-sub">confirmed placements</p>
+  </div>
+  <div class="metric">
+    <p class="metric-label">Avg order value</p>
+    <p class="metric-val" id="aov">—</p>
+    <p class="metric-sub">per order</p>
+  </div>
+  <div class="metric">
+    <p class="metric-label">Upsell rate</p>
+    <p class="metric-val" id="upsell">—</p>
+    <p class="metric-sub">accepted upsells</p>
+  </div>
+</div>
+
+<div class="top-grid">
+  <div class="section">
+    <h2>Recent orders</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Session</th>
+          <th>Items</th>
+          <th>Total</th>
+          <th>Upsell</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="order-rows"></tbody>
+    </table>
+  </div>
+
+  <div class="section">
+    <h2>Live activity</h2>
+    <div class="events-list" id="events-list"></div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Customer summary</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Session</th>
+        <th>Orders</th>
+        <th>Total spent</th>
+        <th>Tier</th>
+        <th>Last seen</th>
+      </tr>
+    </thead>
+    <tbody id="customer-rows"></tbody>
+  </table>
+</div>
+
+<p class="refresh" id="last-refresh">Last updated: —</p>
+
+<script>
+const SUPABASE_URL = 'https://opqbfiozldckezosymqw.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9wcWJmaW96bGRja2V6b3N5bXF3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY2NzYyMDAsImV4cCI6MjA5MjI1MjIwMH0.a6ccb7DIPrupswi4IJqMYnrJoB-5XLcYbXdMH1iCGjk';
+const { createClient } = supabase;
+const db = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+function getTier(orderCount, totalSpent) {
+  if (orderCount >= 10 || totalSpent >= 3000) return 'VIP';
+  if (orderCount >= 3) return 'Returning';
+  return 'New';
+}
+
+function tierBadge(tier) {
+  const colors = {
+    'VIP': 'background:#fff8e1;color:#f57f17',
+    'Returning': 'background:#e8f5e9;color:#2e7d32',
+    'New': 'background:#f5f5f5;color:#888'
+  };
+  return `<span class="badge" style="${colors[tier] || ''}">${tier}</span>`;
+}
+
+async function load() {
+  const { data: stats } = await db
+    .from('daily_stats')
+    .select('*')
+    .order('stat_date', { ascending: false })
+    .limit(1)
+    .single();
+
+  if (stats) {
+    document.getElementById('revenue').textContent = '₹' + Math.round(stats.total_revenue || 0);
+    document.getElementById('orders').textContent = stats.total_orders || 0;
+    document.getElementById('aov').textContent = '₹' + Math.round(stats.avg_order_value || 0);
+    document.getElementById('upsell').textContent = Math.round(stats.upsell_rate || 0) + '%';
+  }
+
+  const { data: orders } = await db
+    .from('orders')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(15);
+
+  const orderRows = document.getElementById('order-rows');
+  orderRows.innerHTML = '';
+  (orders || []).forEach(o => {
+    let items = '';
+    try {
+      const parsed = typeof o.items === 'string' ? JSON.parse(o.items) : o.items;
+      items = (parsed || []).map(i => i.name).join(', ');
+    } catch(e) {
+      items = o.items || '';
+    }
+    const time = new Date(o.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const session = (o.session_id || '').slice(-6);
+    orderRows.innerHTML += `<tr>
+      <td>${time}</td>
+      <td style="color:#aaa">...${session}</td>
+      <td>${items}</td>
+      <td>₹${Math.round(o.total || 0)}</td>
+      <td><span class="badge ${o.upsell_accepted ? 'badge-yes' : 'badge-no'}">${o.upsell_accepted ? 'Yes' : 'No'}</span></td>
+      <td><span class="badge badge-${o.status}">${o.status}</span></td>
+    </tr>`;
+  });
+
+  const { data: events } = await db
+    .from('events')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(10);
+
+  const eventsList = document.getElementById('events-list');
+  eventsList.innerHTML = '';
+  (events || []).forEach(e => {
+    const time = new Date(e.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const session = (e.session_id || '').slice(-6);
+    const typeColors = {
+      'order_completed': '#2e7d32',
+      'upsell_shown': '#f57f17',
+      'order_started': '#1565c0'
+    };
+    const color = typeColors[e.event_type] || '#888';
+    eventsList.innerHTML += `<div class="event-row">
+      <span class="event-type" style="color:${color}">${e.event_type}</span>
+      <span class="event-session">...${session}</span>
+      <span class="event-time">${time}</span>
+    </div>`;
+  });
+
+  const { data: customers } = await db
+    .from('customers')
+    .select('*')
+    .order('last_seen', { ascending: false })
+    .limit(10);
+
+  const customerRows = document.getElementById('customer-rows');
+  customerRows.innerHTML = '';
+  (customers || []).forEach(c => {
+    const tier = getTier(c.order_count || 0, c.total_spent || 0);
+    const session = (c.session_id || '').slice(-6);
+    const lastSeen = new Date(c.last_seen).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    customerRows.innerHTML += `<tr>
+      <td style="color:#aaa">...${session}</td>
+      <td>${c.order_count || 0}</td>
+      <td>₹${Math.round(c.total_spent || 0)}</td>
+      <td>${tierBadge(tier)}</td>
+      <td>${lastSeen}</td>
+    </tr>`;
+  });
+
+  document.getElementById('last-refresh').textContent =
+    'Last updated: ' + new Date().toLocaleTimeString();
+}
+
+load();
+setInterval(load, 15000);
+</script>
+</body>
+</html>
